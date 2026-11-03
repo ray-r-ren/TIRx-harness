@@ -1,0 +1,46 @@
+schema_version = "1.4"
+source = "skillnet"
+artifacts = ["/task/outputs", "/task/answer.txt"]
+
+[task]
+name = "skillnet/gpu-kernel-forge-register_report"
+description = "GPU Kernel Forge — Inspect generated GPU code: I'm tuning my kernel `row_dot.py` for an H100. Before I change anything, tell me what the"
+keywords = ["skillnet", "gpu-kernel-forge", "inspect-generated-gpu-code"]
+
+[[task.authors]]
+name = "SkillNet Agent"
+
+[metadata]
+[metadata.skillnet]
+skill = "gpu-kernel-forge"
+version = 3
+task = "register_report"
+ability = "Inspect generated GPU code"
+core = false
+source = "builder"
+judge = "programmatic"
+prompt = "I'm tuning my kernel `row_dot.py` for an H100. Before I change anything, tell me what the\ncompiler actually does with it on that GPU: how many registers per thread it uses, whether it\nspills to local memory, and how much static shared memory it needs per block.\n\nEnd your answer with a one-line JSON object like\n`{\"registers\": 0, \"spill_bytes\": 0, \"static_smem_bytes\": 0}` with the real numbers\n(`spill_bytes` = spill stores + spill loads in bytes)."
+
+[agent]
+timeout_sec = 900
+user = "agent"
+
+[verifier]
+timeout_sec = 600
+environment_mode = "separate"
+
+[environment]
+build_timeout_sec = 1800
+cpus = 4
+memory_mb = 8192
+workdir = "/task"
+network_mode = "allowlist"
+allowed_hosts = ["skillnet.sh"]
+
+[[environment.mcp_servers]]
+name = "skillnet"
+transport = "streamable-http"
+url = "https://skillnet.sh/mcp"
+
+[environment.mcp_servers.headers]
+Authorization = "Bearer ${SKILLNET_API_KEY}"

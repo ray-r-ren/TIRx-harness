@@ -1,0 +1,1120 @@
+manifest_version: 1
+name: GPU Kernel Forge
+slug: gpu-kernel-forge
+superpower: Describe the math. Get a GPU kernel that's verified correct and tuned for speed.
+category: software-engineering
+cant_do:
+  - Time or run Blackwell-only kernels (sm_100a, tcgen05/TMEM) on the H100; they can still be simulated, checked and compiled on CPU
+  - Simulate opaque CUDA code, WGMMA, or operations missing from NumSim's coverage table
+  - Treat simulator time as GPU latency; speed comes only from benchmark_kernel on the GPU
+  - Multi-GPU or distributed kernels (only single-kernel launches)
+  - Write kernels in CUDA C++, Triton or other languages; kernels are TIRx-lite Python
+  - Remote GPU execution through kcoral or the upstream optimization-run server
+  - Prove correctness for all inputs; checks cover the concrete inputs given
+  - Run kernel files that use relative imports or import other user files; kernels must be one standalone .py
+example_prompts:
+  - Write a GPU kernel that computes out = 2*a + b for float32 vectors and prove it's correct
+  - Start me from an H100 softmax kernel and check it for races
+  - My RMSNorm kernel gives wrong numbers; find which elements are off and fix it
+  - How many registers does my kernel use on H100, and does it spill?
+  - Benchmark my optimized GEMM against the original on the H100 and tell me the speedup
+  - Export this kernel as a .cu file I can build without TVM
+engines: []
+resources:
+  cpu: 4
+  memory_mib: 8192
+  gpu: H100
+  timeout_s: 1800
+  max_input_mb: 200
+egress: []
+credentials: []
+agent_side: []
+cost:
+  typical_seconds: 15
+sdk_version: 0.3.0
+tools_package: tools
+tools:
+  - name: benchmark_kernel
+    title: Benchmark a kernel on the H100 GPU
+    kind: measure
+    description: "Use for 'how fast is it?' or 'did my change make it faster?'. Last stage, after simulate_kernel passes and
+
+      check_kernel_safety is clean. Runs on the skill's NVIDIA H100 (sm_90a). Takes an uploaded file (kernel_file) or
+
+      pasted source text (source), and the same for an optional baseline. First refuses with arch_unsupported, naming
+
+      the kernel's arch and the H100's, any kernel that targets another GPU (sm_100a / tcgen05 Blackwell). Then checks
+
+      the device outputs against reference() and times interleaved runs (median/min microseconds); with a baseline it
+
+      reports the speedup."
+    input_schema:
+      additionalProperties: false
+      properties:
+        kernel_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: The TIRx-lite kernel .py file (@txl.kernel functions, usually with make_inputs() and reference()). An uploaded file_id or an https URL. Pass this or `source`, not both.
+        source:
+          maxLength: 200000
+          type: string
+          description: The kernel's Python source code as text (the same content as a kernel .py file), e.g. a kernel you just wrote or a starter's `source` from find_kernel_examples. Use instead of kernel_file; line…
+        case_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: Optional test-case .py with make_inputs()/reference() at real sizes (omit when the kernel file has them); constants BYTES_MOVED / FLOPS add GB/s / TFLOP/s.
+        baseline_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: Optional earlier, verified version of the kernel to time under identical conditions for a speedup (same kernel_name, same parameters). Pass this or baseline_source, not both.
+        baseline_source:
+          maxLength: 200000
+          type: string
+          description: The baseline kernel's Python source as text, instead of baseline_file (e.g. the version before your change).
+        kernel_name:
+          maxLength: 200
+          type: string
+          description: Which @txl.kernel function to use when the file defines several (its Python function name).
+        repeats:
+          default: 100
+          description: Timed launches per run (10-1000).
+          maximum: 1000
+          minimum: 10
+          type: integer
+        runs:
+          default: 3
+          description: Independent timing runs (1-5); candidate and baseline are interleaved run by run.
+          maximum: 5
+          minimum: 1
+          type: integer
+        rtol:
+          default: 0.00001
+          description: Relative tolerance for the on-device correctness check.
+          maximum: 1
+          minimum: 0
+          type: number
+        atol:
+          default: 1e-8
+          description: Absolute tolerance for the on-device check.
+          maximum: 1000000
+          minimum: 0
+          type: number
+      type: object
+    output_schema:
+      additionalProperties: false
+      properties:
+        kernel:
+          type: string
+        device:
+          type: string
+        device_arch:
+          type: string
+        arch:
+          description: The arch the kernel was compiled for on the device
+          type: string
+        kernel_arch:
+          type: string
+          description: The arch declared in @txl.kernel
+        correct:
+          description: Device outputs match reference() within rtol/atol
+          type: boolean
+        max_abs_err:
+          anyOf:
+            - type: number
+            - type: string
+        outputs:
+          items:
+            properties:
+              name:
+                type: string
+              shape:
+                items:
+                  type: integer
+                type: array
+              dtype:
+                default: ""
+                type: string
+              max_abs_err:
+                anyOf:
+                  - type: number
+                  - type: string
+              max_rel_err:
+                description: Over elements whose expected value is nonzero
+                anyOf:
+                  - type: number
+                  - type: string
+              mismatches:
+                default: 0
+                type: integer
+              first_mismatches:
+                items:
+                  properties:
+                    index:
+                      items:
+                        type: integer
+                      type: array
+                    flat_index:
+                      type: integer
+                    got:
+                      anyOf:
+                        - type: number
+                        - type: integer
+                        - type: string
+                        - type: boolean
+                        - type: "null"
+                    expected:
+                      anyOf:
+                        - type: number
+                        - type: integer
+                        - type: string
+                        - type: boolean
+                        - type: "null"
+                  required:
+                    - index
+                    - flat_index
+                    - got
+                    - expected
+                  type: object
+                type: array
+              mismatch_ranges:
+                description: Runs of consecutive mismatching flat indices [first, last]
+                items:
+                  items:
+                    type: integer
+                  type: array
+                type: array
+              mismatch_range_count:
+                default: 0
+                type: integer
+              missing:
+                default: false
+                description: The simulator returned no value for this output
+                type: boolean
+              shape_mismatch:
+                type: string
+            required:
+              - name
+            type: object
+          type: array
+        median_us:
+          description: Median latency over all timed launches (microseconds)
+          type: number
+        min_us:
+          type: number
+        per_run_median_us:
+          items:
+            type: number
+          type: array
+        repeats:
+          type: integer
+        runs:
+          type: integer
+        baseline_kernel:
+          type: string
+        baseline_correct:
+          type: boolean
+        baseline_median_us:
+          type: number
+        baseline_per_run_median_us:
+          items:
+            type: number
+          type: array
+        speedup:
+          type: number
+          description: baseline_median_us / median_us (>1 = faster)
+        faster_in_every_run:
+          type: boolean
+        bandwidth_gbs:
+          type: number
+        tflops:
+          type: number
+      required:
+        - kernel
+        - device
+        - device_arch
+        - arch
+        - correct
+        - median_us
+        - min_us
+        - per_run_median_us
+        - repeats
+        - runs
+      type: object
+    long_running: true
+    timeout_s: 1200
+  - name: check_kernel_safety
+    title: Check for deadlocks and memory races
+    kind: check
+    description: "Use before running a kernel on a GPU and after any change to barriers, pipelines or warp roles ('will this
+
+      hang?', 'is there a race?'). Takes an uploaded file (kernel_file) or pasted source text (source). Runs
+
+      Synccheck (deadlocks, barrier misuse) and Racecheck (racing shared/global memory accesses) on CPU for the launch
+
+      from make_inputs(). Returns each checker's verdict (clean, review, incomplete, error) and findings with kind,
+
+      message and kernel lines, plus full reports as files. A clean result covers only these inputs and this launch.
+
+      Returns a state_id to reuse compiled work."
+    input_schema:
+      additionalProperties: false
+      properties:
+        kernel_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: The TIRx-lite kernel .py file (@txl.kernel functions, usually with make_inputs() and reference()). An uploaded file_id or an https URL. Pass this or `source`, not both.
+        source:
+          maxLength: 200000
+          type: string
+          description: The kernel's Python source code as text (the same content as a kernel .py file), e.g. a kernel you just wrote or a starter's `source` from find_kernel_examples. Use instead of kernel_file; line…
+        case_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: Optional test-case .py with make_inputs() (dict of NumPy inputs by parameter name, zeroed outputs) and reference(inputs) (expected outputs). Omit when the kernel file has them.
+        kernel_name:
+          maxLength: 200
+          type: string
+          description: Which @txl.kernel function to use when the file defines several (its Python function name).
+        checks:
+          default: both
+          description: "Which checks: 'sync' = deadlocks and barrier misuse (Synccheck, 'will it hang?'), 'race' = racing memory accesses (Racecheck), 'both' (default)."
+          enum:
+            - both
+            - sync
+            - race
+          type: string
+        state_id:
+          type: string
+          description: "Continue from an earlier call's work: pass the state_id its result gave. Omit to start fresh."
+      type: object
+    output_schema:
+      additionalProperties: false
+      properties:
+        kernel:
+          type: string
+        overall:
+          enum:
+            - clean
+            - review
+            - incomplete
+            - error
+          type: string
+        synccheck:
+          properties:
+            verdict:
+              description: clean, review, incomplete or error
+              type: string
+            finding_count:
+              type: integer
+            counts:
+              additionalProperties:
+                type: integer
+              description: Findings per status:kind
+              type: object
+            findings:
+              description: Up to 6 distinct findings (all in the report)
+              items:
+                properties:
+                  id:
+                    type: string
+                  status:
+                    description: error = definite problem; review = needs a human look
+                    type: string
+                  kind:
+                    type: string
+                  message:
+                    type: string
+                  lines:
+                    description: Kernel line numbers involved (of the file, or of the source text when source was given)
+                    items:
+                      type: integer
+                    type: array
+                  code:
+                    additionalProperties:
+                      type: string
+                    description: Source text of those lines
+                    type: object
+                required:
+                  - id
+                  - status
+                  - kind
+                  - message
+                type: object
+              type: array
+            reason:
+              type: string
+              description: Why the checker could not finish
+            seconds:
+              type: number
+          required:
+            - verdict
+            - finding_count
+          type: object
+        racecheck:
+          properties:
+            verdict:
+              description: clean, review, incomplete or error
+              type: string
+            finding_count:
+              type: integer
+            counts:
+              additionalProperties:
+                type: integer
+              description: Findings per status:kind
+              type: object
+            findings:
+              description: Up to 6 distinct findings (all in the report)
+              items:
+                properties:
+                  id:
+                    type: string
+                  status:
+                    description: error = definite problem; review = needs a human look
+                    type: string
+                  kind:
+                    type: string
+                  message:
+                    type: string
+                  lines:
+                    description: Kernel line numbers involved (of the file, or of the source text when source was given)
+                    items:
+                      type: integer
+                    type: array
+                  code:
+                    additionalProperties:
+                      type: string
+                    description: Source text of those lines
+                    type: object
+                required:
+                  - id
+                  - status
+                  - kind
+                  - message
+                type: object
+              type: array
+            reason:
+              type: string
+              description: Why the checker could not finish
+            seconds:
+              type: number
+          required:
+            - verdict
+            - finding_count
+          type: object
+      required:
+        - kernel
+        - overall
+      type: object
+    long_running: true
+    timeout_s: 900
+    state_version: 1
+  - name: compile_kernel
+    title: Compile and show generated GPU code
+    kind: inspect
+    description: "Use when the user asks about registers, spills, shared memory or the generated PTX/SASS, or to confirm a
+
+      kernel compiles for an architecture (A100 sm_80, L4 sm_89, H100 sm_90a, B200 sm_100a). Takes an uploaded file
+
+      (kernel_file) or pasted source text (source). Works on CPU, no GPU needed. Compiles with the TIRx pipeline and returns the assembler's resource report (registers, spill bytes,
+
+      static shared memory) plus the CUDA, PTX and SASS files. Run it after the kernel passes simulate_kernel, when
+
+      tuning."
+    input_schema:
+      additionalProperties: false
+      properties:
+        kernel_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: The TIRx-lite kernel .py file (@txl.kernel functions, usually with make_inputs() and reference()). An uploaded file_id or an https URL. Pass this or `source`, not both.
+        source:
+          maxLength: 200000
+          type: string
+          description: The kernel's Python source code as text (the same content as a kernel .py file), e.g. a kernel you just wrote or a starter's `source` from find_kernel_examples. Use instead of kernel_file; line…
+        kernel_name:
+          maxLength: 200
+          type: string
+          description: Which @txl.kernel function to use when the file defines several (its Python function name).
+        arch:
+          default: kernel
+          description: "Target GPU architecture: 'kernel' (default) = the arch declared in @txl.kernel; sm_80 = A100, sm_89 = L4/RTX 40, sm_90a = H100/H200 (Hopper), sm_100a = B200/GB200 (Blackwell)."
+          enum:
+            - kernel
+            - sm_80
+            - sm_89
+            - sm_90a
+            - sm_100a
+          type: string
+        stages:
+          default: sass
+          description: "How far to go: 'cuda' = generated CUDA C++ only; 'ptx' = CUDA + PTX; 'sass' (default) = CUDA + PTX + the assembler's register/spill/shared-memory report + the SASS listing."
+          enum:
+            - cuda
+            - ptx
+            - sass
+          type: string
+      type: object
+    output_schema:
+      additionalProperties: false
+      properties:
+        kernel:
+          type: string
+        arch:
+          type: string
+        kernel_arch:
+          description: The arch declared in @txl.kernel
+          type: string
+        symbols:
+          items:
+            type: string
+          type: array
+        registers:
+          type: integer
+          description: Registers per thread (ptxas)
+        spill_stores:
+          type: integer
+          description: Bytes spilled to local memory (stores)
+        spill_loads:
+          type: integer
+          description: Bytes reloaded from spills
+        stack_bytes:
+          type: integer
+        static_smem_bytes:
+          type: integer
+          description: Static shared memory per CTA (bytes, ptxas)
+        dynamic_smem_bytes:
+          default: 0
+          description: Dynamic shared memory per CTA set at launch (bytes)
+          type: integer
+        barriers:
+          type: integer
+        ptx_target:
+          type: string
+          description: The .target line of the PTX, e.g. sm_90a
+        sass_instructions:
+          default: 0
+          type: integer
+        cuda_lines:
+          default: 0
+          type: integer
+        ptx_lines:
+          default: 0
+          type: integer
+        stages:
+          type: string
+        errors:
+          items:
+            type: string
+          type: array
+        compile_seconds:
+          type: number
+      required:
+        - kernel
+        - arch
+        - kernel_arch
+        - symbols
+        - stages
+      type: object
+    long_running: true
+    timeout_s: 600
+  - name: export_kernel
+    title: Export kernel as standalone CUDA
+    kind: export
+    description: "Use when the user wants to ship or use the kernel without TVM or TIRx ('give me a .cu I can build'). Final
+
+      step, after simulate_kernel and check_kernel_safety. Takes an uploaded file (kernel_file) or pasted source text
+
+      (source). Writes CUDA C++ holding the device kernel and its host launch wrapper, USAGE.md with the argument
+
+      contract and build/call snippets, and the kernel .py itself (one standalone file, no relative imports);
+
+      optionally builds a tvm-ffi shared library (.so) for the chosen arch with nvcc (no GPU needed)."
+    input_schema:
+      additionalProperties: false
+      properties:
+        kernel_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: The TIRx-lite kernel .py file (@txl.kernel functions, usually with make_inputs() and reference()). An uploaded file_id or an https URL. Pass this or `source`, not both.
+        source:
+          maxLength: 200000
+          type: string
+          description: The kernel's Python source code as text (the same content as a kernel .py file), e.g. a kernel you just wrote or a starter's `source` from find_kernel_examples. Use instead of kernel_file; line…
+        kernel_name:
+          maxLength: 200
+          type: string
+          description: Which @txl.kernel function to use when the file defines several (its Python function name).
+        arch:
+          default: kernel
+          description: "Target GPU architecture: 'kernel' (default) = the arch declared in @txl.kernel; sm_80 = A100, sm_89 = L4/RTX 40, sm_90a = H100/H200 (Hopper), sm_100a = B200/GB200 (Blackwell)."
+          enum:
+            - kernel
+            - sm_80
+            - sm_89
+            - sm_90a
+            - sm_100a
+          type: string
+        build_library:
+          default: false
+          description: Also build a loadable shared library (.so, tvm-ffi) for the chosen arch with nvcc.
+          type: boolean
+      type: object
+    output_schema:
+      additionalProperties: false
+      properties:
+        kernel:
+          type: string
+        entry_symbol:
+          description: Name of the host entry function in the .cu / .so
+          type: string
+        device_kernels:
+          items:
+            type: string
+          type: array
+        arch:
+          type: string
+        ffi_arch:
+          description: Value for TVM_FFI_CUDA_ARCH_LIST when rebuilding
+          type: string
+        args:
+          description: Arguments in call order
+          items:
+            properties:
+              name:
+                type: string
+              kind:
+                type: string
+              dtype:
+                type: string
+            required:
+              - name
+              - kind
+              - dtype
+            type: object
+          type: array
+        grid:
+          items:
+            anyOf:
+              - type: integer
+              - type: string
+          type: array
+        threads_per_cta:
+          type: integer
+        cu_lines:
+          type: integer
+        built:
+          type: boolean
+        build_error:
+          type: string
+        kernel_py:
+          type: string
+          description: Name of the kernel .py returned with the export (the source as given; one standalone file)
+      required:
+        - kernel
+        - entry_symbol
+        - device_kernels
+        - arch
+        - ffi_arch
+        - args
+        - grid
+        - threads_per_cta
+        - cu_lines
+        - built
+      type: object
+    long_running: true
+    timeout_s: 600
+  - name: find_kernel_examples
+    title: Find example kernels and reference docs
+    kind: inspect
+    description: "Use when starting a new GPU kernel ('I need a softmax / GEMM / norm kernel') or when unsure how to write an
+
+      instruction in TIRx-lite. Start here, before writing a kernel. Searches verified H100 (sm_90a) starter kernels
+
+      (elementwise, saxpy, reduction, softmax, RMSNorm, layernorm, matmul), the TIRx kernel collection (mostly
+
+      Blackwell) and the TIRx-lite manuals; `starter=` fetches one starter exactly. Returns ranked matches; each
+
+      starter comes back as a standalone .py file and its full source text, ready to pass as `source` to the other
+
+      tools."
+    input_schema:
+      additionalProperties: false
+      properties:
+        query:
+          default: ""
+          description: Math or operation words to look for, e.g. 'rmsnorm', 'row sum warp shuffle', 'mbarrier', 'ld.global f16', 'gemm', 'bar.sync'. Required unless `starter` is set.
+          maxLength: 200
+          type: string
+        scope:
+          default: both
+          description: "What to search: 'kernels' (example kernel sources), 'reference' (TIRx-lite manuals, checker/simulator guides and the simulator's supported-operations table) or 'both'."
+          enum:
+            - kernels
+            - reference
+            - both
+          type: string
+        max_results:
+          default: 8
+          description: How many matches to return (1-20).
+          maximum: 20
+          minimum: 1
+          type: integer
+        starter:
+          enum:
+            - elementwise
+            - saxpy
+            - reduction
+            - softmax
+            - rmsnorm
+            - layernorm
+            - matmul
+          type: string
+          description: "Return exactly this verified H100 starter kernel (ignores query): elementwise ('vector add'), saxpy, reduction ('sum'), softmax, rmsnorm ('RMS norm'), layernorm ('layer norm'), matmul ('GEMM'…"
+      type: object
+    output_schema:
+      additionalProperties: false
+      properties:
+        query:
+          type: string
+        matches:
+          items:
+            properties:
+              kind:
+                description: kernel = example kernel source; api = TIRx-lite library source; doc = reference section
+                enum:
+                  - kernel
+                  - api
+                  - doc
+                type: string
+              name:
+                type: string
+              path:
+                description: "Where it lives: starter/<file>, tirx_kernels/<path> or reference/<doc>#<section>"
+                type: string
+              archs:
+                description: GPU architectures the kernel targets (kernels only)
+                items:
+                  type: string
+                type: array
+              runs_on_h100:
+                type: boolean
+                description: Whether the kernel can be timed on this skill's H100 (sm_90a); Blackwell sm_100a kernels cannot
+              verified:
+                default: false
+                description: "Starter kernels: simulated and race-checked clean"
+                type: boolean
+              standalone:
+                type: boolean
+                description: The returned .py has no relative imports and every module it imports from tirx_kernels exists
+              excerpt:
+                type: string
+              score:
+                type: number
+              source:
+                type: string
+                description: "Full source text (top 2 starter matches): pass it as `source` to inspect_kernel / simulate_kernel"
+              file:
+                type: string
+                description: Name of the output .py holding this source
+            required:
+              - kind
+              - name
+              - path
+              - excerpt
+              - score
+            type: object
+          type: array
+        total:
+          description: How many items matched before the max_results cut
+          type: integer
+        attached_files:
+          description: Names of the source and reference files returned as outputs
+          items:
+            type: string
+          type: array
+      required:
+        - query
+        - matches
+        - total
+        - attached_files
+      type: object
+    long_running: false
+    timeout_s: 60
+  - name: inspect_kernel
+    title: Inspect a TIRx-lite kernel
+    kind: inspect
+    description: "Use on any kernel before checking or benchmarking it, or when a kernel 'won't load'. After
+
+      find_kernel_examples. Takes the kernel as an uploaded file (kernel_file) or as pasted source text (source), not
+
+      both. Traces it in a time- and memory-limited process and reports each @txl.kernel: parameters with dtypes,
+
+      grid, warps, target arch, whether it is Blackwell-only, and whether make_inputs()/reference() exist and match.
+
+      Returns the traced TIRx text as a file. Fails with kernel_trace_failed (failing line) or relative_import (the
+
+      kernel must be one standalone file)."
+    input_schema:
+      additionalProperties: false
+      properties:
+        kernel_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: The TIRx-lite kernel .py file (@txl.kernel functions, usually with make_inputs() and reference()). An uploaded file_id or an https URL. Pass this or `source`, not both.
+        source:
+          maxLength: 200000
+          type: string
+          description: The kernel's Python source code as text (the same content as a kernel .py file), e.g. a kernel you just wrote or a starter's `source` from find_kernel_examples. Use instead of kernel_file; line…
+        kernel_name:
+          maxLength: 200
+          type: string
+          description: Which @txl.kernel function to use when the file defines several (its Python function name). Leave empty to report every kernel in the file.
+      type: object
+    output_schema:
+      additionalProperties: false
+      properties:
+        file:
+          type: string
+        input_kind:
+          description: Whether the kernel came as a file or as source text
+          enum:
+            - file
+            - source
+          type: string
+        kernels:
+          items:
+            properties:
+              name:
+                type: string
+              params:
+                items:
+                  properties:
+                    name:
+                      type: string
+                    kind:
+                      description: pointer (global buffer), scalar, tensormap or other
+                      type: string
+                    dtype:
+                      type: string
+                    shape:
+                      items:
+                        type: string
+                      type: array
+                      description: Symbolic buffer shape (pointers only)
+                  required:
+                    - name
+                    - kind
+                    - dtype
+                  type: object
+                type: array
+              grid:
+                description: CTAs per grid dimension; a name means it depends on a parameter
+                items:
+                  anyOf:
+                    - type: integer
+                    - type: string
+                type: array
+              grid_static:
+                description: True when the grid is a constant (the CPU simulator needs this)
+                type: boolean
+              warps:
+                type: integer
+              threads_per_cta:
+                type: integer
+              arch:
+                description: Target arch from @txl.kernel, e.g. sm_90a (H100) or sm_100a (Blackwell)
+                type: string
+              blackwell_only:
+                description: "Targets sm_100+ or uses tcgen05/TMEM: cannot run on the H100"
+                type: boolean
+              uses_wgmma:
+                type: boolean
+              uses_tcgen05:
+                type: boolean
+              dynamic_smem_bytes:
+                default: 0
+                description: Dynamic shared memory per CTA requested at launch
+                type: integer
+              tirx_lines:
+                type: integer
+            required:
+              - name
+              - params
+              - grid
+              - grid_static
+              - warps
+              - threads_per_cta
+              - arch
+              - blackwell_only
+              - uses_wgmma
+              - uses_tcgen05
+              - tirx_lines
+            type: object
+          type: array
+        all_kernel_names:
+          items:
+            type: string
+          type: array
+        has_make_inputs:
+          type: boolean
+        has_reference:
+          type: boolean
+        has_case_functions:
+          description: Both make_inputs() and reference() are defined in this file
+          type: boolean
+        case_check:
+          properties:
+            ok:
+              description: make_inputs() ran and matches the kernel's parameters and dtypes
+              type: boolean
+            problem:
+              type: string
+            input_shapes:
+              additionalProperties:
+                items:
+                  type: integer
+                type: array
+              type: object
+            extra_keys:
+              description: make_inputs() keys that are not parameters
+              items:
+                type: string
+              type: array
+          required:
+            - ok
+          type: object
+          description: Dry run of make_inputs() (single kernel only)
+      required:
+        - file
+        - input_kind
+        - kernels
+        - all_kernel_names
+        - has_make_inputs
+        - has_reference
+        - has_case_functions
+      type: object
+    long_running: false
+    timeout_s: 180
+  - name: simulate_kernel
+    title: Check a kernel's numbers on CPU (NumSim)
+    kind: check
+    description: "Use to verify a kernel computes the right math without a GPU ('is my kernel correct?', 'which elements are
+
+      wrong?'). After inspect_kernel. Takes an uploaded file (kernel_file) or pasted source text (source). Runs
+
+      NumSim, a CPU simulator of the GPU program, on make_inputs() and compares every output with reference(inputs)
+
+      under rtol/atol. Returns pass/fail/incomplete, max abs/rel error per output, mismatch counts, the first
+
+      mismatching indices (got/expected) and mismatch ranges. Simulator time is not GPU latency. Returns a state_id:
+
+      pass it to the next simulate_kernel call to reuse compiled simulator work."
+    input_schema:
+      additionalProperties: false
+      properties:
+        kernel_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: The TIRx-lite kernel .py file (@txl.kernel functions, usually with make_inputs() and reference()). An uploaded file_id or an https URL. Pass this or `source`, not both.
+        source:
+          maxLength: 200000
+          type: string
+          description: The kernel's Python source code as text (the same content as a kernel .py file), e.g. a kernel you just wrote or a starter's `source` from find_kernel_examples. Use instead of kernel_file; line…
+        case_file:
+          format: skillnet-file
+          type: string
+          x-accept:
+            - .py
+          description: Optional test-case .py with make_inputs() (dict of NumPy inputs by parameter name, zeroed outputs) and reference(inputs) (expected outputs). Omit when the kernel file has them.
+        kernel_name:
+          maxLength: 200
+          type: string
+          description: Which @txl.kernel function to use when the file defines several (its Python function name).
+        rtol:
+          default: 0.00001
+          description: Relative tolerance for np.isclose (use ~1e-2 for fp16/bf16 outputs).
+          maximum: 1
+          minimum: 0
+          type: number
+        atol:
+          default: 1e-8
+          description: Absolute tolerance for np.isclose.
+          maximum: 1000000
+          minimum: 0
+          type: number
+        state_id:
+          type: string
+          description: "Continue from an earlier call's work: pass the state_id its result gave. Omit to start fresh."
+      type: object
+    output_schema:
+      additionalProperties: false
+      properties:
+        verdict:
+          description: pass = every output within tolerance; fail = wrong values or a simulator fault; incomplete = the simulator could not model the kernel
+          enum:
+            - pass
+            - fail
+            - incomplete
+          type: string
+        kernel:
+          type: string
+        outputs:
+          items:
+            properties:
+              name:
+                type: string
+              shape:
+                items:
+                  type: integer
+                type: array
+              dtype:
+                default: ""
+                type: string
+              max_abs_err:
+                anyOf:
+                  - type: number
+                  - type: string
+              max_rel_err:
+                description: Over elements whose expected value is nonzero
+                anyOf:
+                  - type: number
+                  - type: string
+              mismatches:
+                default: 0
+                type: integer
+              first_mismatches:
+                items:
+                  properties:
+                    index:
+                      items:
+                        type: integer
+                      type: array
+                    flat_index:
+                      type: integer
+                    got:
+                      anyOf:
+                        - type: number
+                        - type: integer
+                        - type: string
+                        - type: boolean
+                        - type: "null"
+                    expected:
+                      anyOf:
+                        - type: number
+                        - type: integer
+                        - type: string
+                        - type: boolean
+                        - type: "null"
+                  required:
+                    - index
+                    - flat_index
+                    - got
+                    - expected
+                  type: object
+                type: array
+              mismatch_ranges:
+                description: Runs of consecutive mismatching flat indices [first, last]
+                items:
+                  items:
+                    type: integer
+                  type: array
+                type: array
+              mismatch_range_count:
+                default: 0
+                type: integer
+              missing:
+                default: false
+                description: The simulator returned no value for this output
+                type: boolean
+              shape_mismatch:
+                type: string
+            required:
+              - name
+            type: object
+          type: array
+        total_mismatches:
+          type: integer
+        fault:
+          type: string
+          description: deadlock, out_of_bounds or execution_fault when the simulated launch itself failed
+        execution_error:
+          type: string
+        reason:
+          type: string
+          description: Why the result is incomplete
+        diagnostics:
+          description: Simulator diagnostics, grouped
+          items:
+            properties:
+              status:
+                type: string
+              kind:
+                type: string
+              count:
+                type: integer
+              examples:
+                items:
+                  type: string
+                type: array
+            required:
+              - status
+              - kind
+              - count
+              - examples
+            type: object
+          type: array
+        sim_verdict:
+          description: NumSim's own verdict on the run
+          type: string
+        extra_input_keys:
+          items:
+            type: string
+          type: array
+        rtol:
+          type: number
+        atol:
+          type: number
+        simulate_seconds:
+          type: number
+          description: CPU simulation time (not GPU latency)
+        cache_reused:
+          description: Simulator build artifacts from an earlier call in the state passed as state_id were available for reuse
+          type: boolean
+        same_kernel_as_before:
+          default: false
+          description: This exact kernel text (file or source) was already simulated in that state
+          type: boolean
+      required:
+        - verdict
+        - kernel
+        - outputs
+        - total_mismatches
+        - sim_verdict
+        - rtol
+        - atol
+        - cache_reused
+      type: object
+    long_running: true
+    timeout_s: 900
+    state_version: 1
+datasets: []
+workers: []
+source: null

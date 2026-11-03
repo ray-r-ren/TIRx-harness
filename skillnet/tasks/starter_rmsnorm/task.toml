@@ -1,0 +1,46 @@
+schema_version = "1.4"
+source = "skillnet"
+artifacts = ["/task/outputs", "/task/answer.txt"]
+
+[task]
+name = "skillnet/gpu-kernel-forge-starter_rmsnorm"
+description = "GPU Kernel Forge — Find example kernels and language reference: I need an RMSNorm kernel for our H100. Input `x` is a float32 matrix of 16 rows × 512 columns"
+keywords = ["skillnet", "gpu-kernel-forge", "find-example-kernels-and-language-reference"]
+
+[[task.authors]]
+name = "SkillNet Agent"
+
+[metadata]
+[metadata.skillnet]
+skill = "gpu-kernel-forge"
+version = 3
+task = "starter_rmsnorm"
+ability = "Find example kernels and language reference"
+core = true
+source = "builder"
+judge = "programmatic"
+prompt = "I need an RMSNorm kernel for our H100. Input `x` is a float32 matrix of 16 rows × 512 columns\n(row-major) and `w` is a float32 weight vector of length 512:\n\n    out[r, c] = x[r, c] / sqrt(mean(x[r, :]²) + 1e-5) * w[c]\n\nThe kernel's parameters must be exactly `x`, `w`, `out` (in that order). Give me one self-contained\nkernel `.py` file, including the test inputs and the NumPy reference you checked it against, so I\ncan rerun your checks. It must compute the right numbers and be free of races and deadlocks. In\nyour answer, say how you verified it."
+
+[agent]
+timeout_sec = 900
+user = "agent"
+
+[verifier]
+timeout_sec = 600
+environment_mode = "separate"
+
+[environment]
+build_timeout_sec = 1800
+cpus = 4
+memory_mb = 8192
+workdir = "/task"
+network_mode = "allowlist"
+allowed_hosts = ["skillnet.sh"]
+
+[[environment.mcp_servers]]
+name = "skillnet"
+transport = "streamable-http"
+url = "https://skillnet.sh/mcp"
+
+[environment.mcp_servers.headers]
+Authorization = "Bearer ${SKILLNET_API_KEY}"

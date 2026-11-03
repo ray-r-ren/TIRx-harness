@@ -1,0 +1,9 @@
+[
+ {
+  "title": "Find and fix a bug in pasted kernel code",
+  "kind": "document",
+  "input": "vector_add_pasted.py",
+  "output": "vector_add_fix_report.md",
+  "caption": "The CPU simulator pinpoints exactly which outputs of a pasted H100 kernel are wrong; after a one-line fix it matches NumPy exactly and checks race-free."
+ }
+]

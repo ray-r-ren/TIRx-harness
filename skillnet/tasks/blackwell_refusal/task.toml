@@ -1,0 +1,46 @@
+schema_version = "1.4"
+source = "skillnet"
+artifacts = ["/task/outputs", "/task/answer.txt"]
+
+[task]
+name = "skillnet/gpu-kernel-forge-blackwell_refusal"
+description = "GPU Kernel Forge — Benchmark on a real GPU: Benchmark my vector-add kernel (`vadd_b200.py`) on your H100 and tell me its median latency in"
+keywords = ["skillnet", "gpu-kernel-forge", "benchmark-on-a-real-gpu"]
+
+[[task.authors]]
+name = "SkillNet Agent"
+
+[metadata]
+[metadata.skillnet]
+skill = "gpu-kernel-forge"
+version = 3
+task = "blackwell_refusal"
+ability = "Benchmark on a real GPU"
+core = true
+source = "builder"
+judge = "programmatic"
+prompt = "Benchmark my vector-add kernel (`vadd_b200.py`) on your H100 and tell me its median latency in\nmicroseconds. Don't change the kernel: I want the number for this exact file."
+
+[agent]
+timeout_sec = 900
+user = "agent"
+
+[verifier]
+timeout_sec = 600
+environment_mode = "separate"
+
+[environment]
+build_timeout_sec = 1800
+cpus = 4
+memory_mb = 8192
+workdir = "/task"
+network_mode = "allowlist"
+allowed_hosts = ["skillnet.sh"]
+
+[[environment.mcp_servers]]
+name = "skillnet"
+transport = "streamable-http"
+url = "https://skillnet.sh/mcp"
+
+[environment.mcp_servers.headers]
+Authorization = "Bearer ${SKILLNET_API_KEY}"

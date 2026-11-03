@@ -1,0 +1,46 @@
+schema_version = "1.4"
+source = "skillnet"
+artifacts = ["/task/outputs", "/task/answer.txt"]
+
+[task]
+name = "skillnet/gpu-kernel-forge-benchmark_saxpy_h100"
+description = "GPU Kernel Forge — Benchmark on a real GPU: Time my SAXPY kernel (`saxpy.py`) on your H100 GPU. Tell me which GPU it ran on, whether its"
+keywords = ["skillnet", "gpu-kernel-forge", "benchmark-on-a-real-gpu"]
+
+[[task.authors]]
+name = "SkillNet Agent"
+
+[metadata]
+[metadata.skillnet]
+skill = "gpu-kernel-forge"
+version = 3
+task = "benchmark_saxpy_h100"
+ability = "Benchmark on a real GPU"
+core = false
+source = "builder"
+judge = "programmatic"
+prompt = "Time my SAXPY kernel (`saxpy.py`) on your H100 GPU. Tell me which GPU it ran on, whether its\noutput was correct on the device, and its median latency in microseconds. Save the benchmark\nreport you get as a file with your outputs."
+
+[agent]
+timeout_sec = 900
+user = "agent"
+
+[verifier]
+timeout_sec = 600
+environment_mode = "separate"
+
+[environment]
+build_timeout_sec = 1800
+cpus = 4
+memory_mb = 8192
+workdir = "/task"
+network_mode = "allowlist"
+allowed_hosts = ["skillnet.sh"]
+
+[[environment.mcp_servers]]
+name = "skillnet"
+transport = "streamable-http"
+url = "https://skillnet.sh/mcp"
+
+[environment.mcp_servers.headers]
+Authorization = "Bearer ${SKILLNET_API_KEY}"

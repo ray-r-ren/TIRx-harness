@@ -1,0 +1,46 @@
+schema_version = "1.4"
+source = "skillnet"
+artifacts = ["/task/outputs", "/task/answer.txt"]
+
+[task]
+name = "skillnet/gpu-kernel-forge-find_and_fix_bug"
+description = "GPU Kernel Forge — Check numerical correctness without a GPU: My SAXPY kernel (`saxpy_kernel.py`, out = alpha·x + y over 300 float32 values, for an H100) gives"
+keywords = ["skillnet", "gpu-kernel-forge", "check-numerical-correctness-without-a-gpu"]
+
+[[task.authors]]
+name = "SkillNet Agent"
+
+[metadata]
+[metadata.skillnet]
+skill = "gpu-kernel-forge"
+version = 3
+task = "find_and_fix_bug"
+ability = "Check numerical correctness without a GPU"
+core = true
+source = "builder"
+judge = "programmatic"
+prompt = "My SAXPY kernel (`saxpy_kernel.py`, out = alpha·x + y over 300 float32 values, for an H100) gives\nwrong results and I can't see why.\n\nFind out which output elements are wrong (give me the exact index range), fix the kernel without\nchanging its parameters, and give me the fixed kernel file. Make sure the fix actually works."
+
+[agent]
+timeout_sec = 900
+user = "agent"
+
+[verifier]
+timeout_sec = 600
+environment_mode = "separate"
+
+[environment]
+build_timeout_sec = 1800
+cpus = 4
+memory_mb = 8192
+workdir = "/task"
+network_mode = "allowlist"
+allowed_hosts = ["skillnet.sh"]
+
+[[environment.mcp_servers]]
+name = "skillnet"
+transport = "streamable-http"
+url = "https://skillnet.sh/mcp"
+
+[environment.mcp_servers.headers]
+Authorization = "Bearer ${SKILLNET_API_KEY}"

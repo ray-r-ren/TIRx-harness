@@ -1,0 +1,46 @@
+schema_version = "1.4"
+source = "skillnet"
+artifacts = ["/task/outputs", "/task/answer.txt"]
+
+[task]
+name = "skillnet/gpu-kernel-forge-source_text_simulate"
+description = "GPU Kernel Forge — Check numerical correctness without a GPU: I don't have this kernel as a file, only the code below. It's meant to compute"
+keywords = ["skillnet", "gpu-kernel-forge", "check-numerical-correctness-without-a-gpu"]
+
+[[task.authors]]
+name = "SkillNet Agent"
+
+[metadata]
+[metadata.skillnet]
+skill = "gpu-kernel-forge"
+version = 3
+task = "source_text_simulate"
+ability = "Check numerical correctness without a GPU"
+core = true
+source = "builder"
+judge = "programmatic"
+prompt = "I don't have this kernel as a file, only the code below. It's meant to compute\n`out[r, c] = x[r, c] * w[c] + bias[c]` for an 8 × 64 float32 matrix `x` (row-major) on our H100,\nbut the numbers come out wrong.\n\nTell me exactly which output elements are wrong (rows/columns or flat index ranges), fix the kernel\nwithout changing its parameters (`x`, `w`, `bias`, `out`), and save the fixed kernel as a `.py` file.\nMake sure the fix actually works.\n\n```python\nimport numpy as np\nimport tirx_kernels.tirx_lite as txl\n\nROWS = 8\nCOLS = 64\nWARPS = 4\nGRID = ROWS // WARPS\n\n\n@txl.kernel(warps=WARPS, arch=\"sm_90a\", grid=GRID)\ndef scale_bias(x: txl.gptr(txl.f32), w: txl.gptr(txl.f32), bias: txl.gptr(txl.f32), out: txl.gptr(txl.f32)):\n    lane = txl.lane_id()\n    row = txl.cta_id() * WARPS + txl.thread_id() // 32\n    v = txl.local_scalar(\"float32\")\n    s = txl.local_scalar(\"float32\")\n    b = txl.local_scalar(\"float32\")\n    with txl.unroll(COLS // 32) as k:\n        col = k * 32 + lane\n        txl.ptx.ld.global_.f32(v, x.ptr_to([row * COLS + col]))\n        txl.ptx.ld.global_.f32(s, w.ptr_to([lane]))\n        txl.ptx.ld.global_.f32(b, bias.ptr_to([col]))\n        txl.ptx.st.global_.f32(out.ptr_to([row * COLS + col]), v * s + b)\n\n\ndef make_inputs():\n    rng = np.random.default_rng(3)\n    return {\n        \"x\": rng.uniform(0.5, 1.5, ROWS * COLS).astype(np.float32),\n        \"w\": rng.uniform(0.5, 1.5, COLS).astype(np.float32),\n        \"bias\": rng.uniform(0.5, 1.5, COLS).astype(np.float32),\n        \"out\": np.zeros(ROWS * COLS, np.float32),\n    }\n\n\ndef reference(inputs):\n    x = inputs[\"x\"].astype(np.float64).reshape(ROWS, COLS)\n    y = x * inputs[\"w\"].astype(np.float64) + inputs[\"bias\"].astype(np.float64)\n    return {\"out\": y.reshape(-1).astype(np.float32)}\n```"
+
+[agent]
+timeout_sec = 900
+user = "agent"
+
+[verifier]
+timeout_sec = 600
+environment_mode = "separate"
+
+[environment]
+build_timeout_sec = 1800
+cpus = 4
+memory_mb = 8192
+workdir = "/task"
+network_mode = "allowlist"
+allowed_hosts = ["skillnet.sh"]
+
+[[environment.mcp_servers]]
+name = "skillnet"
+transport = "streamable-http"
+url = "https://skillnet.sh/mcp"
+
+[environment.mcp_servers.headers]
+Authorization = "Bearer ${SKILLNET_API_KEY}"

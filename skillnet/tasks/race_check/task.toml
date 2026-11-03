@@ -1,0 +1,46 @@
+schema_version = "1.4"
+source = "skillnet"
+artifacts = ["/task/outputs", "/task/answer.txt"]
+
+[task]
+name = "skillnet/gpu-kernel-forge-race_check"
+description = "GPU Kernel Forge — Check synchronization and memory races: Before I run my kernel `tile_reverse.py` on our H100, I want to know whether it can race or"
+keywords = ["skillnet", "gpu-kernel-forge", "check-synchronization-and-memory-races"]
+
+[[task.authors]]
+name = "SkillNet Agent"
+
+[metadata]
+[metadata.skillnet]
+skill = "gpu-kernel-forge"
+version = 3
+task = "race_check"
+ability = "Check synchronization and memory races"
+core = true
+source = "builder"
+judge = "programmatic"
+prompt = "Before I run my kernel `tile_reverse.py` on our H100, I want to know whether it can race or\ndeadlock. Each block of 128 threads should reverse its 128-element tile of `a` into `out`,\nmultiplied by `scale`.\n\nCheck it. If there is a synchronization or memory-race problem, tell me what it is and where,\nfix it without changing the kernel's parameters or what it computes, and give me the fixed\nkernel file. Confirm the fixed version is both safe and numerically correct."
+
+[agent]
+timeout_sec = 900
+user = "agent"
+
+[verifier]
+timeout_sec = 600
+environment_mode = "separate"
+
+[environment]
+build_timeout_sec = 1800
+cpus = 4
+memory_mb = 8192
+workdir = "/task"
+network_mode = "allowlist"
+allowed_hosts = ["skillnet.sh"]
+
+[[environment.mcp_servers]]
+name = "skillnet"
+transport = "streamable-http"
+url = "https://skillnet.sh/mcp"
+
+[environment.mcp_servers.headers]
+Authorization = "Bearer ${SKILLNET_API_KEY}"
